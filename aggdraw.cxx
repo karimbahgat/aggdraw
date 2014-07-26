@@ -111,8 +111,6 @@ typedef struct {
     int buffer_size;
     PyObject* image;
     PyObject* background;
-    agg::vcgen_stroke::line_join_e lineJoinType;
-    agg::vcgen_stroke::line_cap_e lineCapType;
 #if defined(WIN32)
     HDC dc;
     HBITMAP bitmap;
@@ -146,6 +144,7 @@ typedef struct {
 } PenObject;
 
 static void pen_dealloc(PenObject* self);
+static PyObject* pen_getattr(DrawObject* self, char* name);
 
 static PyTypeObject PenType = {
     PyObject_HEAD_INIT(NULL)
@@ -604,11 +603,6 @@ draw_new(PyObject* self_, PyObject* args)
         Py_INCREF(image); /* hang on to this image */
         Py_DECREF(buffer);
     }
-
-    self->lineJoinType = agg::vcgen_stroke::miter_join;
-    self->lineCapType = agg::vcgen_stroke::butt_cap;
-
-    
 
     draw_setup(self);
     
@@ -1367,12 +1361,20 @@ pen_new(PyObject* self_, PyObject* args, PyObject* kw)
     return (PyObject*) self;
 }
 
-static PyObject*  
-pen_getattr(PenObject* self, char* name)
-{    
-    return Py_FindMethod(pen_methods, (PyObject*) self, name);
-}
 
+static PyObject*
+pen_setwidth(PenObject* self, PyObject* args)
+{
+    float width;
+    if (!PyArg_ParseTuple(args, "f:setwidth", &width))
+        return NULL;
+
+
+    self->width = width;
+      
+    Py_INCREF(Py_None);
+    return Py_None;
+}
 static PyObject*
 pen_setlinejoin(PenObject* self, PyObject* args)
 {
@@ -1392,8 +1394,7 @@ pen_setlinejoin(PenObject* self, PyObject* args)
         self->lineJoinType = agg::vcgen_stroke::line_join_e(3);
     else
         {
-          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Join Type!\n
-Use 'miter', 'miter_reversed', 'round', or 'bevel'");
+          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Join Type!\nUse 'miter', 'miter_reversed', 'round', or 'bevel'");
           return NULL;
         }
       
@@ -1418,8 +1419,7 @@ pen_setlinecap(PenObject* self, PyObject* args)
         self->lineCapType = agg::vcgen_stroke::line_cap_e(2);
     else
         {
-          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Join Type!\n
-Use 'butt', 'square', or 'round'");
+          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Join Type!\nUse 'butt', 'square', or 'round'");
           return NULL;
         }
       
@@ -1435,13 +1435,19 @@ pen_dealloc(PenObject* self)
 
 static PyMethodDef pen_methods[] = {
 
-    {"setlinejoin", (PyCFunction) pen_setlinejoin, METH_VARARGS, "Set line-join type.\n
-Acceptable types are 'miter', 'miter_reversed', 'round', or 'bevel'"},
-    {"setlinecap", (PyCFunction) pen_setlinecap, METH_VARARGS, "Set line-cap type.\n
-Acceptable types are 'butt', 'square', or 'round'"},
+    {"setwidth", (PyCFunction) pen_setwidth, METH_VARARGS, "Set pen width."},
+    {"setlinejoin", (PyCFunction) pen_setlinejoin, METH_VARARGS, "Set line-join type.\nAcceptable types are 'miter', 'miter_reversed', 'round', or 'bevel'"},
+    {"setlinecap", (PyCFunction) pen_setlinecap, METH_VARARGS, "Set line-cap type.\nAcceptable types are 'butt', 'square', or 'round'"},
 
     {NULL, NULL}
 };
+
+static PyObject*  
+pen_getattr(PenObject* self, char* name)
+{    
+    return Py_FindMethod(pen_methods, (PyObject*) self, name);
+}
+
 
 
 /* -------------------------------------------------------------------- */
