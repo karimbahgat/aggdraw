@@ -141,6 +141,8 @@ typedef struct {
     PyObject_HEAD
     agg::rgba8 color;
     float width;
+    agg::vcgen_stroke::line_join_e lineJoinType;
+    agg::vcgen_stroke::line_cap_e lineCapType;
 } PenObject;
 
 static void pen_dealloc(PenObject* self);
@@ -151,7 +153,7 @@ static PyTypeObject PenType = {
     /* methods */
     (destructor) pen_dealloc, /* tp_dealloc */
     0, /* tp_print */
-    0, /* tp_getattr */
+    (getattrfunc) pen_getattr, /* tp_getattr */
     0, /* tp_setattr */
 };
 
@@ -346,8 +348,8 @@ public:
             /* FIXME: add path for dashed lines */
             agg::conv_stroke<agg::path_storage> stroke(*p);
             stroke.width(pen->width);
-            stroke.line_join(self->lineJoinType);
-            stroke.line_cap(self->lineCapType);
+            stroke.line_join(pen->lineJoinType);
+            stroke.line_cap(pen->lineCapType);
             rasterizer.reset();
             rasterizer.add_path(stroke);
             renderer.color(pen->color);
@@ -1123,58 +1125,6 @@ draw_setantialias(DrawObject* self, PyObject* args)
 }
 
 static PyObject*
-draw_setlinejoin(DrawObject* self, PyObject* args)
-{
-    char* s;
-    if (!PyArg_ParseTuple(args, "s:setlinejoin", &s))
-        return NULL;
-
-    std::string lineJoinType(s);
-
-    if (lineJoinType == "miter")
-        self->lineJoinType = agg::vcgen_stroke::line_join_e(0);
-    else if (lineJoinType == "miter_reversed")
-        self->lineJoinType = agg::vcgen_stroke::line_join_e(1);
-    else if (lineJoinType == "round")
-        self->lineJoinType = agg::vcgen_stroke::line_join_e(2);
-    else if (lineJoinType == "bevel")
-        self->lineJoinType = agg::vcgen_stroke::line_join_e(3);
-    else
-        {
-          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Join Type!\nUse 'miter', 'miter_reversed', 'round', or 'bevel'");
-          return NULL;
-        }
-      
-    Py_INCREF(Py_None);
-    return Py_None;
-}
-
-static PyObject*
-draw_setlinecap(DrawObject* self, PyObject* args)
-{
-    char* s;
-    if (!PyArg_ParseTuple(args, "s:setlinecap", &s))
-        return NULL;
-
-    std::string lineCapType(s);
-
-    if (lineCapType == "butt")
-        self->lineCapType = agg::vcgen_stroke::line_cap_e(0);
-    else if (lineCapType == "square")
-        self->lineCapType = agg::vcgen_stroke::line_cap_e(1);
-    else if (lineCapType == "round")
-        self->lineCapType = agg::vcgen_stroke::line_cap_e(2);
-    else
-        {
-          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Join Type!\nUse 'butt', 'square', or 'round'");
-          return NULL;
-        }
-      
-    Py_INCREF(Py_None);
-    return Py_None;
-}
-
-static PyObject*
 draw_settransform(DrawObject* self, PyObject* args)
 {
     double a=1, b=0, c=0, d=0, e=1, f=0;
@@ -1336,10 +1286,6 @@ static PyMethodDef draw_methods[] = {
     {"settransform", (PyCFunction) draw_settransform, METH_VARARGS},
     {"setantialias", (PyCFunction) draw_setantialias, METH_VARARGS},
 
-    {"setlinejoin", (PyCFunction) draw_setlinejoin, METH_VARARGS, "Set line-join type.\nAcceptable types are 'miter', 'miter_reversed', 'round', or 'bevel'"},
-    {"setlinecap", (PyCFunction) draw_setlinecap, METH_VARARGS, "Set line-cap type.\nAcceptable types are 'butt', 'square', or 'round'"},
-    
-
     {"flush", (PyCFunction) draw_flush, METH_VARARGS},
 
 #if defined(WIN32)
@@ -1400,9 +1346,12 @@ pen_new(PyObject* self_, PyObject* args, PyObject* kw)
     PyObject* color;
     float width = 1.0;
     int opacity = 255;
-    static char* kwlist[] = { "color", "width", "opacity", NULL };
-    if (!PyArg_ParseTupleAndKeywords(args, kw, "O|fi:Pen", kwlist,
-                                     &color, &width, &opacity))
+    agg::vcgen_stroke::line_join_e lineJoinType = agg::vcgen_stroke::miter_join;
+    agg::vcgen_stroke::line_cap_e lineCapType = agg::vcgen_stroke::butt_cap;
+    
+    static char* kwlist[] = { "color", "width", "opacity", "linejoin", "linecap", NULL }; //SK: Why the NULL at the end?
+    if (!PyArg_ParseTupleAndKeywords(args, kw, "O|fiss:Pen", kwlist,
+                                     &color, &width, &opacity, &lineJoinType, &lineCapType))
         return NULL;
 
     self = PyObject_NEW(PenObject, &PenType);
@@ -1412,8 +1361,70 @@ pen_new(PyObject* self_, PyObject* args, PyObject* kw)
 
     self->color = getcolor(color, opacity);
     self->width = width;
+    self->lineCapType = lineCapType;
+    self->lineJoinType = lineJoinType;
 
     return (PyObject*) self;
+}
+
+static PyObject*  
+pen_getattr(PenObject* self, char* name)
+{    
+    return Py_FindMethod(pen_methods, (PyObject*) self, name);
+}
+
+static PyObject*
+pen_setlinejoin(PenObject* self, PyObject* args)
+{
+    char* s;
+    if (!PyArg_ParseTuple(args, "s:setlinejoin", &s))
+        return NULL;
+
+    std::string lineJoinType(s);
+
+    if (lineJoinType == "miter")
+        self->lineJoinType = agg::vcgen_stroke::line_join_e(0);
+    else if (lineJoinType == "miter_reversed")
+        self->lineJoinType = agg::vcgen_stroke::line_join_e(1);
+    else if (lineJoinType == "round")
+        self->lineJoinType = agg::vcgen_stroke::line_join_e(2);
+    else if (lineJoinType == "bevel")
+        self->lineJoinType = agg::vcgen_stroke::line_join_e(3);
+    else
+        {
+          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Join Type!\n
+Use 'miter', 'miter_reversed', 'round', or 'bevel'");
+          return NULL;
+        }
+      
+    Py_INCREF(Py_None);
+    return Py_None;
+}
+
+static PyObject*
+pen_setlinecap(PenObject* self, PyObject* args)
+{
+    char* s;
+    if (!PyArg_ParseTuple(args, "s:setlinecap", &s))
+        return NULL;
+
+    std::string lineCapType(s);
+
+    if (lineCapType == "butt")
+        self->lineCapType = agg::vcgen_stroke::line_cap_e(0);
+    else if (lineCapType == "square")
+        self->lineCapType = agg::vcgen_stroke::line_cap_e(1);
+    else if (lineCapType == "round")
+        self->lineCapType = agg::vcgen_stroke::line_cap_e(2);
+    else
+        {
+          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Join Type!\n
+Use 'butt', 'square', or 'round'");
+          return NULL;
+        }
+      
+    Py_INCREF(Py_None);
+    return Py_None;
 }
 
 static void
@@ -1421,6 +1432,17 @@ pen_dealloc(PenObject* self)
 {
     PyObject_DEL(self);
 }
+
+static PyMethodDef pen_methods[] = {
+
+    {"setlinejoin", (PyCFunction) pen_setlinejoin, METH_VARARGS, "Set line-join type.\n
+Acceptable types are 'miter', 'miter_reversed', 'round', or 'bevel'"},
+    {"setlinecap", (PyCFunction) pen_setlinecap, METH_VARARGS, "Set line-cap type.\n
+Acceptable types are 'butt', 'square', or 'round'"},
+
+    {NULL, NULL}
+};
+
 
 /* -------------------------------------------------------------------- */
 
