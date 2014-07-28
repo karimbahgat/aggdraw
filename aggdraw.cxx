@@ -37,7 +37,7 @@
  * Copyright (c) 2003-2006 by Secret Labs AB
  */
 
-#define VERSION "1.2a3"
+#define VERSION "1.2a3alpha2"
 
 #if defined(_MSC_VER)
 #define WINDOWS_LEAN_AND_MEAN
