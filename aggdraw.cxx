@@ -79,6 +79,8 @@
 #include "agg_vcgen_stroke.h"
 #include "platform/agg_platform_support.h" // agg::pix_format_*
 
+#include <string>
+
 /* -------------------------------------------------------------------- */
 /* AGG Drawing Surface */
 
@@ -1345,11 +1347,47 @@ pen_new(PyObject* self_, PyObject* args, PyObject* kw)
     agg::line_cap_e line_cap = agg::round_cap;
     float miter_limit = 4.0; // Like default in agg_math_stroke.h
     int opacity = 255;
+    char* line_join_type;
+    char* line_cap_type;    
+
+    
     static const char* kwlist[] = { "color", "width", "opacity", "linejoin", "linecap", "miterlimit", NULL };
-    if (!PyArg_ParseTupleAndKeywords(args, kw, (char*)"O|fiiif:Pen", (char**)kwlist,
+    if (!PyArg_ParseTupleAndKeywords(args, kw, (char*)"O|fissf:Pen", (char**)kwlist,
                                      &color, &width, &opacity,
-                                     &line_join,&line_cap,&miter_limit))
+                                     &line_join_type,&line_cap_type,&miter_limit))
         return NULL;
+
+
+    std::string lineJoinType(line_join_type);
+    if (lineJoinType == "miter")
+        line_join = agg::line_join_e(0);
+    else if (lineJoinType == "miter_reversed")
+        line_join = agg::line_join_e(1);
+    else if (lineJoinType == "round")
+        line_join = agg::line_join_e(2);
+    else if (lineJoinType == "bevel")
+        line_join = agg::line_join_e(3);
+    else
+        {
+          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Join Type!\nUse 'miter', 'miter_reversed', 'round', or 'bevel'");
+          return NULL;
+        }
+
+
+    std::string lineCapType(line_cap_type);
+    if (lineCapType == "butt")
+        line_cap = agg::line_cap_e(0);
+    else if (lineCapType == "square")
+        line_cap = agg::line_cap_e(1);
+    else if (lineCapType == "round")
+        line_cap = agg::line_cap_e(2);
+    else
+        {
+          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Cap Type!\nUse 'butt', 'square', or 'round'");
+          return NULL;
+        }
+    
+
 
     self = PyObject_NEW(PenObject, &PenType);
 
