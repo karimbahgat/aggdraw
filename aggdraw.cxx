@@ -37,7 +37,7 @@
  * Copyright (c) 2003-2006 by Secret Labs AB
  */
 
-#define VERSION "1.2a3alpha2"
+#define VERSION "1.2a3alpha3"
 
 #if defined(_MSC_VER)
 #define WINDOWS_LEAN_AND_MEAN
@@ -282,7 +282,7 @@ public:
     draw_adaptor(DrawObject* self_, const char* mode_) 
     {
         self = self_;
-        Py_INCREF(self);
+        /*        Py_INCREF(self);*/
         if (mode)
             free(mode);
         mode = strdup(mode_);
@@ -291,10 +291,11 @@ public:
 
         rasterizer.clip_box(0,0, self->xsize, self->ysize);
     }
-    ~draw_adaptor()
+  /*    ~draw_adaptor()
     {
       Py_DECREF(self);
-    }
+      }
+  */
 
     void setantialias(bool flag)
     {
@@ -1347,8 +1348,8 @@ pen_new(PyObject* self_, PyObject* args, PyObject* kw)
     agg::line_cap_e line_cap = agg::round_cap;
     float miter_limit = 4.0; // Like default in agg_math_stroke.h
     int opacity = 255;
-    char* line_join_type;
-    char* line_cap_type;    
+    char* line_join_type = "round";
+    char* line_cap_type = "round";    
 
     
     static const char* kwlist[] = { "color", "width", "opacity", "linejoin", "linecap", "miterlimit", NULL };
