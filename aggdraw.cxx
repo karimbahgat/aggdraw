@@ -37,7 +37,7 @@
  * Copyright (c) 2003-2006 by Secret Labs AB
  */
 
-#define VERSION "1.2a3"
+#define VERSION "1.2a3alpha3"
 
 #if defined(_MSC_VER)
 #define WINDOWS_LEAN_AND_MEAN
@@ -69,14 +69,17 @@
 #include "agg_font_freetype.h"
 #endif
 #include "agg_path_storage.h"
-#include "agg_pixfmt_gray8.h"
-#include "agg_pixfmt_rgb24.h"
-#include "agg_pixfmt_rgba32.h"
+#include "agg_pixfmt_gray.h"
+#include "agg_pixfmt_rgb.h"
+#include "agg_pixfmt_rgba.h"
 #include "agg_rasterizer_scanline_aa.h"
 #include "agg_renderer_scanline.h"
 #include "agg_rendering_buffer.h"
 #include "agg_scanline_p.h"
+#include "agg_vcgen_stroke.h"
 #include "platform/agg_platform_support.h" // agg::pix_format_*
+
+#include <string>
 
 /* -------------------------------------------------------------------- */
 /* AGG Drawing Surface */
@@ -133,6 +136,9 @@ typedef struct {
     PyObject_HEAD
     agg::rgba8 color;
     float width;
+    agg::line_join_e line_join;
+    agg::line_cap_e line_cap;
+    float miter_limit;
 } PenObject;
 
 static void pen_dealloc(PenObject* self);
@@ -251,7 +257,11 @@ class draw_adaptor_base
 {
 public:
     char* mode;
-    virtual ~draw_adaptor_base() {};
+    draw_adaptor_base() : mode(NULL) {};
+    virtual ~draw_adaptor_base() {
+        if(mode)
+            free(mode);
+    };
     virtual void setantialias(bool flag) = 0;
     virtual void draw(agg::path_storage &path, PyObject* obj1,
                       PyObject* obj2=NULL) = 0;
@@ -269,15 +279,23 @@ template<class PixFmt> class draw_adaptor : public draw_adaptor_base {
     agg::scanline_p8 scanline;
 
 public:
-    draw_adaptor(DrawObject* self_, char* mode_) 
+    draw_adaptor(DrawObject* self_, const char* mode_) 
     {
         self = self_;
-        mode = mode_;
+        /*        Py_INCREF(self);*/
+        if (mode)
+            free(mode);
+        mode = strdup(mode_);
 
         setantialias(true);
 
         rasterizer.clip_box(0,0, self->xsize, self->ysize);
     }
+  /*    ~draw_adaptor()
+    {
+      Py_DECREF(self);
+      }
+  */
 
     void setantialias(bool flag)
     {
@@ -315,7 +333,7 @@ public:
             p = new agg::path_storage();
             agg::conv_transform<agg::path_storage, agg::trans_affine>
                 tp(path, *self->transform);
-            p->add_path(tp, 0, false);
+            p->concat_path(tp, 0);
         } else
             p = &path;
 
@@ -323,10 +341,6 @@ public:
             /* interior */
             agg::conv_contour<agg::path_storage> contour(*p);
             contour.auto_detect_orientation(true);
-            if (pen)
-                contour.width(pen->width / 2.0);
-            else
-                contour.width(0.5);
             rasterizer.reset();
             rasterizer.add_path(contour);
             renderer.color(brush->color);
@@ -337,6 +351,9 @@ public:
             /* outline */
             /* FIXME: add path for dashed lines */
             agg::conv_stroke<agg::path_storage> stroke(*p);
+            stroke.line_join(pen->line_join);
+            stroke.line_cap(pen->line_cap);
+            stroke.miter_limit(pen->miter_limit);
             stroke.width(pen->width);
             rasterizer.reset();
             rasterizer.add_path(stroke);
@@ -569,7 +586,7 @@ draw_new(PyObject* self_, PyObject* args)
 
     self->image = image;
     if (image) {
-        PyObject* buffer = PyObject_CallMethod(image, "tostring", NULL);
+      PyObject* buffer = PyObject_CallMethod(image, (char*)"tostring", NULL);
         if (!buffer)
             return NULL; /* FIXME: release resources */
         if (!PyString_Check(buffer)) {
@@ -775,7 +792,7 @@ getcolor(PyObject* color, int opacity)
     /* unknown color: pass it to the Python layer */
     if (aggdraw_getcolor_obj) {
         PyObject* result;
-        result = PyObject_CallFunction(aggdraw_getcolor_obj, "O", color);
+        result = PyObject_CallFunction(aggdraw_getcolor_obj, (char*)"O", color);
         if (result) {
             int ok = PyArg_ParseTuple(result, "iii", &red, &green, &blue);
             Py_DECREF(result);
@@ -847,7 +864,7 @@ draw_arc(DrawObject* self, PyObject* args)
         false
         );
     arc.approximation_scale(1);
-    path.add_path(arc);
+    path.concat_path(arc);
 
     self->draw->draw(path, pen);
 
@@ -873,7 +890,7 @@ draw_chord(DrawObject* self, PyObject* args)
         false
         );
     arc.approximation_scale(1);
-    path.add_path(arc);
+    path.concat_path(arc);
     path.close_polygon();
 
     self->draw->draw(path, pen, brush);
@@ -895,7 +912,7 @@ draw_ellipse(DrawObject* self, PyObject* args)
     agg::path_storage path;
     agg::ellipse ellipse((x1+x0)/2, (y1+y0)/2, (x1-x0)/2, (y1-y0)/2, 8);
     ellipse.approximation_scale(1);
-    path.add_path(ellipse);
+    path.concat_path(ellipse);
 
     self->draw->draw(path, pen, brush);
 
@@ -951,7 +968,7 @@ draw_pieslice(DrawObject* self, PyObject* args)
         false
         );
     arc.approximation_scale(1);
-    path.add_path(arc);
+    path.concat_path(arc);
     path.line_to(x, y);
     path.close_polygon();
 
@@ -1034,7 +1051,7 @@ draw_symbol(DrawObject* self, PyObject* args)
         agg::conv_transform<agg::path_storage, agg::trans_affine>
             tp(*symbol->path, transform);
         agg::path_storage p;
-        p.add_path(tp, 0, false);
+        p.concat_path(tp, 0);
         self->draw->draw(p, pen, brush);
     }
 
@@ -1236,7 +1253,7 @@ draw_flush(DrawObject* self, PyObject* args)
     if (!buffer)
         return NULL;
 
-    result = PyObject_CallMethod(self->image, "fromstring", "N", buffer);
+    result = PyObject_CallMethod(self->image, (char*)"fromstring", (char*)"N", buffer);
     if (!result)
         return NULL;
 
@@ -1327,11 +1344,51 @@ pen_new(PyObject* self_, PyObject* args, PyObject* kw)
 
     PyObject* color;
     float width = 1.0;
+    agg::line_join_e line_join = agg::round_join;
+    agg::line_cap_e line_cap = agg::round_cap;
+    float miter_limit = 4.0; // Like default in agg_math_stroke.h
     int opacity = 255;
-    static char* kwlist[] = { "color", "width", "opacity", NULL };
-    if (!PyArg_ParseTupleAndKeywords(args, kw, "O|fi:Pen", kwlist,
-                                     &color, &width, &opacity))
+    char* line_join_type = "round";
+    char* line_cap_type = "round";    
+
+    
+    static const char* kwlist[] = { "color", "width", "opacity", "linejoin", "linecap", "miterlimit", NULL };
+    if (!PyArg_ParseTupleAndKeywords(args, kw, (char*)"O|fissf:Pen", (char**)kwlist,
+                                     &color, &width, &opacity,
+                                     &line_join_type,&line_cap_type,&miter_limit))
         return NULL;
+
+
+    std::string lineJoinType(line_join_type);
+    if (lineJoinType == "miter")
+        line_join = agg::line_join_e(0);
+    else if (lineJoinType == "miter_reversed")
+        line_join = agg::line_join_e(1);
+    else if (lineJoinType == "round")
+        line_join = agg::line_join_e(2);
+    else if (lineJoinType == "bevel")
+        line_join = agg::line_join_e(3);
+    else
+        {
+          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Join Type!\nUse 'miter', 'miter_reversed', 'round', or 'bevel'");
+          return NULL;
+        }
+
+
+    std::string lineCapType(line_cap_type);
+    if (lineCapType == "butt")
+        line_cap = agg::line_cap_e(0);
+    else if (lineCapType == "square")
+        line_cap = agg::line_cap_e(1);
+    else if (lineCapType == "round")
+        line_cap = agg::line_cap_e(2);
+    else
+        {
+          PyErr_SetString(PyExc_RuntimeError, "Illegal Line-Cap Type!\nUse 'butt', 'square', or 'round'");
+          return NULL;
+        }
+    
+
 
     self = PyObject_NEW(PenObject, &PenType);
 
@@ -1340,6 +1397,9 @@ pen_new(PyObject* self_, PyObject* args, PyObject* kw)
 
     self->color = getcolor(color, opacity);
     self->width = width;
+    self->line_join = line_join;
+    self->line_cap = line_cap;
+    self->miter_limit = miter_limit;
 
     return (PyObject*) self;
 }
@@ -1359,8 +1419,8 @@ brush_new(PyObject* self_, PyObject* args, PyObject* kw)
 
     PyObject* color;
     int opacity = 255;
-    static char* kwlist[] = { "color", "opacity", NULL };
-    if (!PyArg_ParseTupleAndKeywords(args, kw, "O|i:Brush", kwlist,
+    static const char* kwlist[] = { "color", "opacity", NULL };
+    if (!PyArg_ParseTupleAndKeywords(args, kw, (char*)"O|i:Brush", (char**)kwlist,
                                      &color, &opacity))
         return NULL;
 
@@ -1390,8 +1450,8 @@ font_new(PyObject* self_, PyObject* args, PyObject* kw)
     char* filename;
     float size = 12;
     int opacity = 255;
-    static char* kwlist[] = { "color", "file", "size", "opacity", NULL };
-    if (!PyArg_ParseTupleAndKeywords(args, kw, "Os|fi:Font", kwlist,
+    static char* kwlist[] = { (char*)"color", (char*)"file", (char*)"size", (char*)"opacity", NULL };
+    if (!PyArg_ParseTupleAndKeywords(args, kw, (char*)"Os|fi:Font", kwlist,
                                      &color, &filename, &size, &opacity))
         return NULL;
 
@@ -1408,13 +1468,13 @@ font_new(PyObject* self_, PyObject* args, PyObject* kw)
     self->height = size;
 
     if (!font_load(self)) {
-        PyErr_SetString(PyExc_IOError, "cannot load font");
+      PyErr_SetString(PyExc_IOError, (char*)"cannot load font");
         return NULL;
     }
 
     return (PyObject*) self;
 #else
-    PyErr_SetString(PyExc_IOError, "cannot load font (no text renderer)");
+    PyErr_SetString(PyExc_IOError, (char*)"cannot load font (no text renderer)");
     return NULL;
 #endif
 }
@@ -1435,7 +1495,7 @@ font_load(FontObject* font, bool outline)
     font_engine.flip_y(1);
     font_engine.height(font->height);
 
-    // requires patch to "agg2\font_freetype\agg_font_freetype.h"
+    // requires patch to "agg\font_freetype\agg_font_freetype.h"
     // the patch should simply expose the m_cur_face variable
     return font_engine.m_cur_face;
 }
@@ -1446,7 +1506,7 @@ font_getattr(FontObject* self, char* name)
 {
 #if defined(HAVE_FREETYPE2)
     FT_Face face;
-    if (!strcmp(name, "family")) {
+    if (!strcmp(name, (char*)"family")) {
         face = font_load(self);
         if (!face) {
             Py_INCREF(Py_None);
@@ -1454,7 +1514,7 @@ font_getattr(FontObject* self, char* name)
         }
         return PyString_FromString(face->family_name);
     }
-    if (!strcmp(name, "style")) {
+    if (!strcmp(name, (char*)"style")) {
         face = font_load(self);
         if (!face) {
             Py_INCREF(Py_None);
@@ -1462,7 +1522,7 @@ font_getattr(FontObject* self, char* name)
         }
         return PyString_FromString(face->style_name);
     }
-    if (!strcmp(name, "ascent")) {
+    if (!strcmp(name, (char*)"ascent")) {
         face = font_load(self);
         if (!face) {
             Py_INCREF(Py_None);
@@ -1470,7 +1530,7 @@ font_getattr(FontObject* self, char* name)
         }
         return PyFloat_FromDouble(face->size->metrics.ascender/64.0);
     }
-    if (!strcmp(name, "descent")) {
+    if (!strcmp(name, (char*)"descent")) {
         face = font_load(self);
         if (!face) {
             Py_INCREF(Py_None);
@@ -1495,7 +1555,7 @@ static PyObject*
 path_new(PyObject* self_, PyObject* args)
 {
     PyObject* xyIn = NULL;
-    if (!PyArg_ParseTuple(args, "|O:Path", &xyIn))
+    if (!PyArg_ParseTuple(args, (char*)"|O:Path", &xyIn))
         return NULL;
 
     PathObject* self = PyObject_NEW(PathObject, &PathType);
@@ -1526,7 +1586,7 @@ symbol_new(PyObject* self_, PyObject* args)
 {
     char* path;
     float scale = 1.0;
-    if (!PyArg_ParseTuple(args, "s|f:Symbol", &path, &scale))
+    if (!PyArg_ParseTuple(args, (char*)"s|f:Symbol", &path, &scale))
         return NULL;
 
     PathObject* self = PyObject_NEW(PathObject, &PathType);
@@ -1558,7 +1618,7 @@ symbol_new(PyObject* self_, PyObject* args)
         } else {
             if (!op) {
                 PyErr_Format(
-                    PyExc_ValueError, "no command at start of path"
+                             PyExc_ValueError, (char*)"no command at start of path"
                     );
                 return NULL;
             }
@@ -1679,7 +1739,7 @@ symbol_new(PyObject* self_, PyObject* args)
         default:
             PyErr_Format(
                 PyExc_ValueError,
-                "unknown path command '%c'", op
+                (char*)"unknown path command '%c'", op
                 );
             /* FIXME: cleanup */
             return NULL;
@@ -1687,7 +1747,7 @@ symbol_new(PyObject* self_, PyObject* args)
         if (p == q) {
             PyErr_Format(
                 PyExc_ValueError,
-                "invalid arguments for command '%c'", op
+                (char*)"invalid arguments for command '%c'", op
                 );
             /* FIXME: cleanup */
             return NULL;
@@ -1699,7 +1759,7 @@ symbol_new(PyObject* self_, PyObject* args)
         agg::path_storage* path = self->path;
         agg::conv_curve<agg::path_storage> curve(*path);
         self->path = new agg::path_storage();
-        self->path->add_path(curve, 0, false);
+        self->path->concat_path(curve, 0);
         delete path;
     }
 
@@ -1710,7 +1770,7 @@ static PyObject*
 path_moveto(PathObject* self, PyObject* args)
 {
     double x, y;
-    if (!PyArg_ParseTuple(args, "dd:moveto", &x, &y))
+    if (!PyArg_ParseTuple(args, (char*)"dd:moveto", &x, &y))
         return NULL;
 
     self->path->move_to(x, y);
@@ -1723,7 +1783,7 @@ static PyObject*
 path_rmoveto(PathObject* self, PyObject* args)
 {
     double x, y;
-    if (!PyArg_ParseTuple(args, "dd:rmoveto", &x, &y))
+    if (!PyArg_ParseTuple(args, (char*)"dd:rmoveto", &x, &y))
         return NULL;
 
     self->path->rel_to_abs(&x, &y);
@@ -1737,7 +1797,7 @@ static PyObject*
 path_lineto(PathObject* self, PyObject* args)
 {
     double x, y;
-    if (!PyArg_ParseTuple(args, "dd:lineto", &x, &y))
+    if (!PyArg_ParseTuple(args, (char*)"dd:lineto", &x, &y))
         return NULL;
 
     self->path->line_to(x, y);
@@ -1750,7 +1810,7 @@ static PyObject*
 path_rlineto(PathObject* self, PyObject* args)
 {
     double x, y;
-    if (!PyArg_ParseTuple(args, "dd:rlineto", &x, &y))
+    if (!PyArg_ParseTuple(args, (char*)"dd:rlineto", &x, &y))
         return NULL;
 
     self->path->rel_to_abs(&x, &y);
@@ -1764,7 +1824,7 @@ static PyObject*
 path_curveto(PathObject* self, PyObject* args)
 {
     double x1, y1, x2, y2, x, y;
-    if (!PyArg_ParseTuple(args, "dddddd:curveto", &x1, &y1, &x2, &y2, &x, &y))
+    if (!PyArg_ParseTuple(args, (char*)"dddddd:curveto", &x1, &y1, &x2, &y2, &x, &y))
         return NULL;
 
     self->path->curve4(x1, y1, x2, y2, x, y);
@@ -1777,7 +1837,7 @@ static PyObject*
 path_rcurveto(PathObject* self, PyObject* args)
 {
     double x1, y1, x2, y2, x, y;
-    if (!PyArg_ParseTuple(args, "dddddd:rcurveto", &x1, &y1, &x2, &y2, &x, &y))
+    if (!PyArg_ParseTuple(args, (char*)"dddddd:rcurveto", &x1, &y1, &x2, &y2, &x, &y))
         return NULL;
 
     self->path->rel_to_abs(&x1, &y1);
@@ -1793,7 +1853,7 @@ path_rcurveto(PathObject* self, PyObject* args)
 static PyObject*
 path_close(PathObject* self, PyObject* args)
 {
-    if (!PyArg_ParseTuple(args, ":close"))
+  if (!PyArg_ParseTuple(args, (char*)":close"))
         return NULL;
 
     self->path->close_polygon();
@@ -1806,7 +1866,7 @@ static PyObject*
 path_polygon(PathObject* self, PyObject* args)
 {
     PyObject* xyIn;
-    if (!PyArg_ParseTuple(args, "O:polygon", &xyIn))
+    if (!PyArg_ParseTuple(args, (char*)"O:polygon", &xyIn))
         return NULL;
 
     int count;
@@ -1822,7 +1882,7 @@ path_polygon(PathObject* self, PyObject* args)
     path.close_polygon();
     delete xy;
 
-    self->path->add_path(path, 0, false);
+    self->path->concat_path(path, 0);
 
     Py_INCREF(Py_None);
     return Py_None;
@@ -1831,7 +1891,7 @@ path_polygon(PathObject* self, PyObject* args)
 static PyObject*
 path_coords(PathObject* self, PyObject* args)
 {
-    if (!PyArg_ParseTuple(args, ":coords"))
+  if (!PyArg_ParseTuple(args, (char*)":coords"))
         return NULL;
 
     agg::conv_curve<agg::path_storage> curve(*self->path);
@@ -1868,18 +1928,18 @@ path_dealloc(PathObject* self)
 
 static PyMethodDef path_methods[] = {
 
-    {"lineto", (PyCFunction) path_lineto, METH_VARARGS},
-    {"rlineto", (PyCFunction) path_rlineto, METH_VARARGS},
-    {"curveto", (PyCFunction) path_curveto, METH_VARARGS},
-    {"rcurveto", (PyCFunction) path_rcurveto, METH_VARARGS},
-    {"moveto", (PyCFunction) path_moveto, METH_VARARGS},
-    {"rmoveto", (PyCFunction) path_rmoveto, METH_VARARGS},
+  {(char*)"lineto", (PyCFunction) path_lineto, METH_VARARGS},
+  {(char*)"rlineto", (PyCFunction) path_rlineto, METH_VARARGS},
+  {(char*)"curveto", (PyCFunction) path_curveto, METH_VARARGS},
+  {(char*)"rcurveto", (PyCFunction) path_rcurveto, METH_VARARGS},
+  {(char*)"moveto", (PyCFunction) path_moveto, METH_VARARGS},
+  {(char*)"rmoveto", (PyCFunction) path_rmoveto, METH_VARARGS},
 
-    {"close", (PyCFunction) path_close, METH_VARARGS},
+  {(char*)"close", (PyCFunction) path_close, METH_VARARGS},
 
-    {"polygon", (PyCFunction) path_polygon, METH_VARARGS},
+  {(char*)"polygon", (PyCFunction) path_polygon, METH_VARARGS},
 
-    {"coords", (PyCFunction) path_coords, METH_VARARGS},
+  {(char*)"coords", (PyCFunction) path_coords, METH_VARARGS},
 
     {NULL, NULL}
 };
@@ -1893,14 +1953,14 @@ path_getattr(PathObject* self, char* name)
 /* -------------------------------------------------------------------- */
 
 static PyMethodDef aggdraw_functions[] = {
-    {"Pen", (PyCFunction) pen_new, METH_VARARGS|METH_KEYWORDS},
-    {"Brush", (PyCFunction) brush_new, METH_VARARGS|METH_KEYWORDS},
-    {"Font", (PyCFunction) font_new, METH_VARARGS|METH_KEYWORDS},
-    {"Symbol", (PyCFunction) symbol_new, METH_VARARGS},
-    {"Path", (PyCFunction) path_new, METH_VARARGS},
-    {"Draw", (PyCFunction) draw_new, METH_VARARGS},
+  {(char*)"Pen", (PyCFunction) pen_new, METH_VARARGS|METH_KEYWORDS},
+  {(char*)"Brush", (PyCFunction) brush_new, METH_VARARGS|METH_KEYWORDS},
+  {(char*)"Font", (PyCFunction) font_new, METH_VARARGS|METH_KEYWORDS},
+  {(char*)"Symbol", (PyCFunction) symbol_new, METH_VARARGS},
+  {(char*)"Path", (PyCFunction) path_new, METH_VARARGS},
+  {(char*)"Draw", (PyCFunction) draw_new, METH_VARARGS},
 #if defined(WIN32)
-    {"Dib", (PyCFunction) draw_dib, METH_VARARGS},
+  {(char*)"Dib", (PyCFunction) draw_dib, METH_VARARGS},
 #endif
     {NULL, NULL}
 };
